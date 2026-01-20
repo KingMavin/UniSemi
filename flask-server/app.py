@@ -9,7 +9,7 @@ import base64
 app = Flask(__name__)
 CORS(app)
 
-# --- HBASE CONNECTION SETUP --- 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
+# --- HBASE CONNECTION SETUP ---
 # REPLACE '192.168.x.x' with the IPv4 Address you wrote down from the Server
 HBASE_HOST = '192.168.1.15' 
 HBASE_PORT = 9090
