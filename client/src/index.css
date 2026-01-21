@@ -66,3 +66,29 @@ button:focus-visible {
     background-color: #f9f9f9;
   }
 }
+/* --- PRINT STYLES --- */
+@media print {
+  /* Hide URL and Page Numbers */
+  @page {
+    margin: 10mm; /* Small margins */
+    size: auto;
+  }
+
+  /* Force background colors to show (Grade coloring) */
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Hide buttons when printing */
+  button, .no-print {
+    display: none !important;
+  }
+
+  /* Clean up the card for paper */
+  .result-card {
+    box-shadow: none;
+    border: none;
+    padding: 0;
+  }
+}

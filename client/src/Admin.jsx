@@ -22,16 +22,14 @@ export default function Admin() {
   const fetchLogs = async () => {
     try { 
         const response = await authFetch('/api/logs'); 
-        const logsData = response.data || response; 
-        setLogs(Array.isArray(logsData) ? logsData : []); 
+        setLogs(Array.isArray(response.data) ? response.data : response || []); 
     } catch (err) { console.error(err); }
   };
 
   const fetchStudents = async () => {
     try {
       const response = await authFetch('/api/students');
-      const studentsData = response.data || response;
-      const studentsList = Array.isArray(studentsData) ? studentsData : [];
+      const studentsList = Array.isArray(response.data) ? response.data : response || [];
       setStudents(studentsList);
       calculateStats(studentsList);
     } catch (err) { console.error(err); }
@@ -62,8 +60,7 @@ export default function Admin() {
   const handleChange = (e) => {
     const { name, value } = e.target;
     const uppercasedValue = (name === 'matricNumber' || name === 'department' || name === 'level') 
-      ? value.toUpperCase() 
-      : value; 
+      ? value.toUpperCase() : value; 
     setFormData({ ...formData, [name]: uppercasedValue });
   };
 
@@ -73,33 +70,21 @@ export default function Admin() {
     
     if (name === 'score') {
         const numericValue = value === '' ? '' : parseInt(value);
-        if (numericValue !== '' && numericValue > 100) {
-            newCourses[index][name] = 100;
-            newCourses[index].scoreError = true;
-        } else {
-            newCourses[index][name] = value === '' ? '' : numericValue;
-            newCourses[index].scoreError = false;
-        }
+        newCourses[index][name] = (numericValue !== '' && numericValue > 100) ? 100 : numericValue;
+        newCourses[index].scoreError = (numericValue > 100);
     } else if (name === 'courseCode') {
         newCourses[index][name] = value.toUpperCase();
-    } else if (name === 'unit') {
-        newCourses[index][name] = value === '' ? '' : parseInt(value) || 0;
     } else {
         newCourses[index][name] = value;
     }
-    
     setFormData({ ...formData, courses: newCourses });
   };
 
   const addCourse = () => setFormData({ ...formData, courses: [...formData.courses, { courseCode: '', score: '', grade: '', unit: '3', scoreError: false }] });
 
   const removeCourse = (index) => {
-    if (formData.courses.length === 1) {
-        alert("You must have at least one course.");
-        return;
-    }
-    const newCourses = formData.courses.filter((_, i) => i !== index);
-    setFormData({ ...formData, courses: newCourses });
+    if (formData.courses.length === 1) return alert("You must have at least one course.");
+    setFormData({ ...formData, courses: formData.courses.filter((_, i) => i !== index) });
   };
 
   const handleSubmit = async (e) => {
@@ -108,6 +93,7 @@ export default function Admin() {
       await authFetch('/api/results', { method: 'POST', body: JSON.stringify(formData) });
       setMessage('✅ Result Processed Successfully!');
       fetchLogs(); fetchStudents();
+      // Reset form
       setFormData({
         matricNumber: '', name: '', department: '', level: '', semester: 'First',
         yearOfAdmission: new Date().getFullYear(),
@@ -116,22 +102,55 @@ export default function Admin() {
     } catch (err) { setMessage(`❌ Operation Failed: ${err.message || 'Unknown error'}`); }
   };
 
-  const handleDeleteStudent = async (id, matric) => {
-    if(!window.confirm(`Delete ${matric}?`)) return;
+  // --- DELETE LOGIC (FIXED) ---
+  const handleDeleteStudent = async (matric) => {
+    if(!window.confirm(`Delete record for ${matric}?`)) return;
     try { 
-        await authFetch(`/api/results/${id}`, { method: 'DELETE' }); 
+        await authFetch(`/api/results/${matric}`, { method: 'DELETE' }); 
         fetchStudents(); fetchLogs(); 
-    } catch (err) { setMessage(`❌ Failed to delete student: ${err.message || 'Unknown error'}`); }
+    } catch (err) { setMessage(`❌ Delete failed: ${err.message}`); }
+  };
+
+  // --- EDIT LOGIC (NEW) ---
+  const handleEditStudent = async (matric) => {
+    try {
+        const response = await authFetch(`/api/results/${matric}`);
+        const data = response.data || response;
+        
+        // Populate form with fetched data
+        // If history exists, populate courses with the LAST semester found
+        let lastCourses = [{ courseCode: '', score: '', grade: '', unit: '3' }];
+        let lastLevel = '';
+        let lastSemester = 'First';
+
+        if (data.academicHistory && data.academicHistory.length > 0) {
+            const lastEntry = data.academicHistory[data.academicHistory.length - 1];
+            lastCourses = lastEntry.courses || lastCourses;
+            lastLevel = lastEntry.level;
+            lastSemester = lastEntry.semester;
+        }
+
+        setFormData({
+            matricNumber: data.matricNumber,
+            name: data.name,
+            department: data.department,
+            level: lastLevel,
+            semester: lastSemester,
+            yearOfAdmission: new Date().getFullYear(), // Default or store in DB if needed
+            courses: lastCourses
+        });
+        window.scrollTo(0, 0); // Scroll to top to edit
+        setMessage('✏️ Loaded student data for editing.');
+    } catch (err) { setMessage(`❌ Fetch failed: ${err.message}`); }
   };
 
   const clearAllLogs = async () => {
     const password = prompt("Enter Admin Passcode to confirm clear:");
-    const storedPasscode = localStorage.getItem('admin_passcode');
-    if (!password || password !== storedPasscode) return alert("Wrong Passcode");
+    if (password !== 'admin123') return alert("Wrong Passcode");
     try {
       await authFetch('/api/logs', { method: 'DELETE' });
       fetchLogs(); setMessage('✅ Logs cleared successfully');
-    } catch (err) { setMessage(`❌ Failed to clear logs: ${err.message || 'Unknown error'}`); }
+    } catch (err) { setMessage(`❌ Failed to clear logs: ${err.message}`); }
   };
 
   return (
@@ -140,21 +159,12 @@ export default function Admin() {
       
       {/* ANALYTICS */}
       <div className="stats-grid">
-        <div className="stats-card">
-            <h3>{stats.total}</h3>
-            <span>Total Students</span>
-        </div>
-        <div className="stats-card">
-            <h3>{stats.avgCGPA}</h3>
-            <span>Average CGPA</span>
-        </div>
-        <div className="stats-card">
-            <h3>{stats.highestCGPA}</h3>
-            <span>Highest CGPA</span>
-        </div>
+        <div className="stats-card"><h3>{stats.total}</h3><span>Total Students</span></div>
+        <div className="stats-card"><h3>{stats.avgCGPA}</h3><span>Average CGPA</span></div>
+        <div className="stats-card"><h3>{stats.highestCGPA}</h3><span>Highest CGPA</span></div>
       </div>
 
-      {message && <div className={message.includes('✅') ? 'message-success' : 'message-error'}>{message}</div>}
+      {message && <div className={message.includes('✅') || message.includes('✏️') ? 'message-success' : 'message-error'}>{message}</div>}
       
       {/* UPLOAD FORM */}
       <form onSubmit={handleSubmit} style={{ marginBottom: '40px' }}>
@@ -168,11 +178,7 @@ export default function Admin() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
                 <select name="level" value={formData.level} onChange={handleChange} required>
                     <option value="">Select Level</option>
-                    <option value="100">100 Level</option>
-                    <option value="200">200 Level</option>
-                    <option value="300">300 Level</option>
-                    <option value="400">400 Level</option>
-                    <option value="500">500 Level</option>
+                    {[100,200,300,400,500].map(l => <option key={l} value={l}>{l} Level</option>)}
                 </select>
                 <select name="semester" value={formData.semester} onChange={handleChange}>
                     <option value="First">First Semester</option>
@@ -186,37 +192,26 @@ export default function Admin() {
             {formData.courses.map((course, index) => (
             <div key={index} className="course-row">
                 <div style={{ flex: 2 }}>
-                    <label style={{fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--text-muted)'}}>Course Code</label>
-                    <input name="courseCode" value={course.courseCode} onChange={(e) => handleCourseChange(index, e)} required />
+                    <input placeholder="Course Code" name="courseCode" value={course.courseCode} onChange={(e) => handleCourseChange(index, e)} required />
                 </div>
                 <div style={{ width: '80px' }}>
-                    <label style={{fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--text-muted)'}}>Unit</label>
-                    <input name="unit" type="number" value={course.unit} onChange={(e) => handleCourseChange(index, e)} min="1" max="10" />
+                    <input placeholder="Unit" name="unit" type="number" value={course.unit} onChange={(e) => handleCourseChange(index, e)} min="1" max="10" />
                 </div>
                 <div style={{ flex: 1 }}>
-                    <label style={{fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--text-muted)'}}>Score (0-100)</label>
-                    <input name="score" type="number" value={course.score} onChange={(e) => handleCourseChange(index, e)} required 
+                    <input placeholder="Score" name="score" type="number" value={course.score} onChange={(e) => handleCourseChange(index, e)} required 
                            style={{ borderColor: course.scoreError ? 'var(--danger)' : '' }} />
                 </div>
-                <div style={{ width: '60px', textAlign: 'center' }}>
-                    <label style={{fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--text-muted)'}}>Grade</label>
-                    <div style={{ fontSize: '1.2rem', fontWeight: 'bold', padding: '10px 0' }}>{getGradePoint(course.score).grade}</div>
+                <div style={{ width: '60px', textAlign: 'center', fontWeight: 'bold' }}>
+                    {getGradePoint(course.score).grade}
                 </div>
-                
-                <button type="button" className="danger-btn" onClick={() => removeCourse(index)} style={{ height: '40px', width: '40px', padding: 0 }}>
-                  ×
-                </button>
+                <button type="button" className="danger-btn" onClick={() => removeCourse(index)} style={{ height: '40px', width: '40px', padding: 0 }}>×</button>
             </div>
             ))}
         </div>
         
         <div style={{ display: 'flex', gap: '15px' }}>
-            <button type="button" className="secondary-btn" onClick={addCourse} style={{ color: 'var(--primary-color)', borderColor: 'var(--primary-color)' }}>
-              + Add Another Course
-            </button>
-            <button type="submit" className="primary-btn" style={{ flex: 1 }}>
-              Submit Result
-            </button>
+            <button type="button" className="secondary-btn" onClick={addCourse}>+ Add Course</button>
+            <button type="submit" className="primary-btn" style={{ flex: 1 }}>Submit Result</button>
         </div>
       </form>
 
@@ -229,20 +224,31 @@ export default function Admin() {
                     <tr>
                         <th>Matric No</th>
                         <th>Name</th>
-                        <th>CGPA</th>
+                        <th>GPA (Sem)</th>
+                        <th>CGPA (Total)</th>
                         <th>Action</th>
                     </tr>
                 </thead>
                 <tbody>
                     {students.map((student) => (
-                        <tr key={student._id}>
+                        <tr key={student.matricNumber}> {/* FIXED KEY */}
                             <td style={{ fontWeight: 'bold' }}>{student.matricNumber}</td>
                             <td>{student.name}</td>
+                            <td>{student.gpa}</td>
                             <td style={{ color: 'var(--success)', fontWeight: 'bold' }}>{student.cgpa}</td>
                             <td>
-                                <button className="danger-btn" onClick={() => handleDeleteStudent(student._id, student.matricNumber)} style={{ padding: '6px 12px', fontSize: '0.8rem' }}>
-                                  Delete
-                                </button>
+                                <div style={{ display: 'flex', gap: '10px' }}>
+                                    <button className="secondary-btn" 
+                                            onClick={() => handleEditStudent(student.matricNumber)} 
+                                            style={{ padding: '6px 12px', fontSize: '0.8rem' }}>
+                                        Edit
+                                    </button>
+                                    <button className="danger-btn" 
+                                            onClick={() => handleDeleteStudent(student.matricNumber)} 
+                                            style={{ padding: '6px 12px', fontSize: '0.8rem' }}>
+                                        Delete
+                                    </button>
+                                </div>
                             </td>
                         </tr>
                     ))}
@@ -259,21 +265,13 @@ export default function Admin() {
         </div>
         <div className="table-container" style={{ maxHeight: '300px', overflowY: 'auto' }}>
             <table>
-                <thead>
-                    <tr>
-                        <th>Action</th>
-                        <th>Details</th>
-                        <th>Timestamp</th>
-                    </tr>
-                </thead>
+                <thead><tr><th>Action</th><th>Details</th><th>Timestamp</th></tr></thead>
                 <tbody>
-                    {logs.map((log) => (
-                        <tr key={log._id}>
+                    {logs.map((log, i) => (
+                        <tr key={i}>
                             <td style={{ fontWeight: 'bold', color: 'var(--primary-color)' }}>{log.action}</td>
                             <td>{log.details}</td>
-                            <td style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                                {new Date(log.timestamp).toLocaleString()}
-                            </td>
+                            <td style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{new Date(log.timestamp).toLocaleString()}</td>
                         </tr>
                     ))}
                 </tbody>
