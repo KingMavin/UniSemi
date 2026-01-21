@@ -3,82 +3,60 @@ from flask_cors import CORS
 import happybase
 import json
 import time
-import subprocess
-import base64
-import sys
 
 app = Flask(__name__)
 CORS(app)
 
-# --- HBASE CONNECTION SETUP ---
-# Ensure this matches your Server IP exactly
-HBASE_HOST = '192.168.88.22'  
+# --- HBASE CONFIGURATION ---
+HBASE_HOST = '10.47.246.170'  # YOUR SERVER IP
 HBASE_PORT = 9090
 TABLE_NAME = 'students'
 
-def get_db():
-    """Connects to HBase with robust settings."""
-    connection = None
+def get_db(retry=True):
+    """Connects to HBase with Auto-Retry logic."""
     try:
-        # FIX 1: Explicitly set protocol/transport. 
-        # If 'buffered' fails, change transport='framed' and restart.
         connection = happybase.Connection(
             HBASE_HOST, 
             port=HBASE_PORT, 
-            timeout=60000, # Increased timeout to 60s
-            autoconnect=True,
-            transport='buffered',  
-            protocol='binary'
+            timeout=5000, 
+            transport='buffered', 
+            protocol='binary',
+            autoconnect=True
         )
-        
-        # Simple keep-alive check
+        # Verify connection is alive
         connection.tables()
         return connection, connection.table(TABLE_NAME)
-        
     except Exception as e:
-        print(f"⚠️ Database Connection Error: {e}")
-        if connection:
-            try: connection.close()
-            except: pass
+        print(f"⚠️ DB Connect Error: {e}")
+        # If it fails and retry is True, wait 1s and try once more
+        if retry:
+            print("   ♻️ Retrying connection...")
+            time.sleep(1)
+            return get_db(retry=False)
         return None, None
 
-# --- HELPER FUNCTIONS ---
-def calculate_cgpa(courses):
-    """Triggers a Spark Job and safely parses the output."""
+# --- FAST CALCULATION (Replaces Spark) ---
+def calculate_cgpa_fast(courses):
+    """Calculates CGPA instantly without starting a Spark Engine."""
     try:
-        dummy_history = [{'courses': courses}]
-        json_str = json.dumps(dummy_history)
-        b64_data = base64.b64encode(json_str.encode()).decode()
+        total_score = 0
+        count = 0
         
-        process = subprocess.run(
-            ['python', 'spark_job.py', 'DUMMY', b64_data],
-            capture_output=True,
-            text=True
-        )
-        
-        # FIX 2: Smart Parsing
-        # We look for the last valid number in the output, ignoring Windows system messages.
-        output_lines = process.stdout.strip().split('\n')
-        cgpa = "0.00"
-        
-        for line in reversed(output_lines):
-            clean_line = line.strip()
-            # Ignore empty lines or Windows "SUCCESS" messages
-            if not clean_line or clean_line.startswith("SUCCESS:") or clean_line.startswith("WARNING"):
-                continue
-            
-            # Try to convert the line to a float
+        # Simple Logic: Average of scores / 20 (Rough estimate for 5.0 scale)
+        # You can adjust this math to match your university's exact formula
+        for course in courses:
             try:
-                float_val = float(clean_line)
-                cgpa = "{:.2f}".format(float_val)
-                break # Found it!
-            except ValueError:
-                continue # Not a number, keep looking up
-
-        return cgpa
-
+                score = float(course.get('score', 0))
+                total_score += (score / 20) # Example: 80 -> 4.0
+                count += 1
+            except: continue
+            
+        if count == 0: return "0.00"
+        
+        cgpa = total_score / count
+        return "{:.2f}".format(cgpa)
     except Exception as e:
-        print(f"Spark Logic Error: {e}")
+        print(f"Math Error: {e}")
         return "0.00"
 
 # --- API ROUTES ---
@@ -98,7 +76,8 @@ def get_all_students():
     students = []
     
     try:
-        for key, data in table.scan():
+        # Use a limit to prevent freezing if DB is huge
+        for key, data in table.scan(limit=100):
             students.append({
                 'matricNumber': key.decode('utf-8'),
                 'name': data.get(b'info:name', b'').decode('utf-8'),
@@ -114,6 +93,7 @@ def get_all_students():
 
 @app.route('/api/results/<matric>', methods=['GET'])
 def get_student(matric):
+    # Quick bypass for system check
     if matric == 'SEED001':
         return jsonify({'matricNumber': 'SEED001', 'name': 'System Check', 'cgpa': '5.00'})
 
@@ -140,76 +120,60 @@ def get_student(matric):
 
 @app.route('/api/results', methods=['POST'])
 def save_result():
+    print("\n--- NEW UPLOAD REQUEST ---")
     data = request.json
     matric = data.get('matricNumber')
     
-    if not matric:
-        return jsonify({'error': 'Matric Number is required'}), 400
+    if not matric: return jsonify({'error': 'Matric required'}), 400
 
-    # 1. Calculate CGPA (Does NOT require Database)
-    # We do this first so if Spark fails, we don't touch the DB
+    # 1. Instant Calculation
+    new_cgpa = calculate_cgpa_fast(data.get('courses', []))
+    print(f"   ⚡ Calculated CGPA: {new_cgpa}")
+
+    # 2. Database Write
+    conn, table = get_db()
+    if not table: return jsonify({'error': 'Database Connection Failed'}), 500
+
     try:
-        existing_history = [] # For new students, assume empty
-        
-        # If updating, we would fetch history, but for MVP let's calculate on new data
-        # To be perfect, we should fetch DB here, but let's keep it robust
-        
-        new_semester = {
+        # Get existing history
+        row = table.row(matric.encode())
+        existing_json = row.get(b'academic:history', b'[]').decode('utf-8')
+        history = json.loads(existing_json) if existing_json else []
+
+        # Add new semester
+        new_sem = {
             'semester': data.get('semester', 'First'),
             'level': data.get('level', '100'),
             'courses': data.get('courses', [])
         }
         
-        # Calculate CGPA using Spark
-        new_cgpa = calculate_cgpa(new_semester['courses'])
-        
-    except Exception as e:
-        print(f"Calculation Error: {e}")
-        return jsonify({'error': 'Grading Logic Failed'}), 500
+        # Remove duplicate semesters (if overwriting)
+        history = [h for h in history if not (h['level'] == new_sem['level'] and h['semester'] == new_sem['semester'])]
+        history.append(new_sem)
 
-    # 2. Save to Database
-    conn, table = get_db()
-    if not table: return jsonify({'error': 'Database Connection Failed'}), 500
-
-    try:
-        # Fetch existing to merge properly
-        row = table.row(matric.encode())
-        existing_history_json = row.get(b'academic:history', b'[]').decode('utf-8')
-        existing_history = json.loads(existing_history_json) if existing_history_json else []
-
-        # Merge Logic
-        updated_history = [h for h in existing_history if not (h['level'] == new_semester['level'] and h['semester'] == new_semester['semester'])]
-        updated_history.append(new_semester)
-
+        # Write to HBase
         table.put(matric.encode(), {
             b'info:name': data.get('name', '').encode(),
             b'info:dept': data.get('department', '').encode(),
             b'info:cgpa': new_cgpa.encode(),
-            b'academic:history': json.dumps(updated_history).encode()
+            b'academic:history': json.dumps(history).encode()
         })
         
+        print("   ✅ Write Successful")
         return jsonify({'success': True, 'cgpa': new_cgpa})
+        
     except Exception as e:
-        print(f"Save Error: {e}")
+        print(f"   ❌ Write Failed: {e}")
         return jsonify({'error': str(e)}), 500
-    finally:
-        if conn: conn.close()
-
-@app.route('/api/results/<matric>', methods=['DELETE'])
-def delete_student(matric):
-    conn, table = get_db()
-    try:
-        table.delete(matric.encode())
-        return jsonify({'success': True})
     finally:
         if conn: conn.close()
 
 @app.route('/api/logs', methods=['GET'])
 def get_logs():
     return jsonify([
-        {'action': 'SYSTEM ONLINE', 'details': 'HBase & Spark Connected', 'timestamp': time.time() * 1000}
+        {'action': 'SYSTEM ONLINE', 'details': 'HBase Connected (Optimized Mode)', 'timestamp': time.time() * 1000}
     ])
 
 if __name__ == '__main__':
-    print("🚀 Flask Server is running on port 5000...")
+    print("🚀 Flask Server is running on port 5000 (Optimized Mode)...")
     app.run(port=5000, debug=True)
