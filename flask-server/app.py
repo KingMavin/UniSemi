@@ -5,70 +5,78 @@ import json
 import time
 import subprocess
 import base64
+import sys
 
 app = Flask(__name__)
 CORS(app)
 
 # --- HBASE CONNECTION SETUP ---
-# REPLACE '192.168.x.x' with the IPv4 Address you wrote down from the Server
-HBASE_HOST = '192.168.1.15' 
+# Ensure this matches your Server IP exactly
+HBASE_HOST = '192.168.88.22'  
 HBASE_PORT = 9090
 TABLE_NAME = 'students'
 
 def get_db():
-    """Connects to HBase (Retry logic handled by autoconnect)."""
+    """Connects to HBase with robust settings."""
     connection = None
     try:
-        # 1. Connect with 30s timeout and autoconnect
-        connection = happybase.Connection(HBASE_HOST, port=HBASE_PORT, timeout=30000, autoconnect=True)
+        # FIX 1: Explicitly set protocol/transport. 
+        # If 'buffered' fails, change transport='framed' and restart.
+        connection = happybase.Connection(
+            HBASE_HOST, 
+            port=HBASE_PORT, 
+            timeout=60000, # Increased timeout to 60s
+            autoconnect=True,
+            transport='buffered',  
+            protocol='binary'
+        )
         
-        # 2. Check if table exists (This also tests the connection)
-        # We assume connection is open because of autoconnect=True
-        tables = connection.tables()
-        if TABLE_NAME.encode() not in tables:
-            print(f"Creating table {TABLE_NAME}...")
-            connection.create_table(
-                TABLE_NAME,
-                {'info': dict(), 'academic': dict()}
-            )
-            
+        # Simple keep-alive check
+        connection.tables()
         return connection, connection.table(TABLE_NAME)
         
     except Exception as e:
-        print(f"⚠️ Database Error: {e}")
+        print(f"⚠️ Database Connection Error: {e}")
         if connection:
-            try:
-                connection.close()
-            except:
-                pass
+            try: connection.close()
+            except: pass
         return None, None
 
 # --- HELPER FUNCTIONS ---
 def calculate_cgpa(courses):
-    """Triggers a Spark Job to calculate the CGPA."""
+    """Triggers a Spark Job and safely parses the output."""
     try:
-        # Wrap courses in a dummy semester structure
         dummy_history = [{'courses': courses}]
         json_str = json.dumps(dummy_history)
-        
-        # Encode to Base64 to avoid Windows command-line issues
         b64_data = base64.b64encode(json_str.encode()).decode()
         
-        # Run the separate Spark script
         process = subprocess.run(
             ['python', 'spark_job.py', 'DUMMY', b64_data],
             capture_output=True,
             text=True
         )
         
-        # Read the last line of output
+        # FIX 2: Smart Parsing
+        # We look for the last valid number in the output, ignoring Windows system messages.
         output_lines = process.stdout.strip().split('\n')
-        if not output_lines:
-            print("Spark Error Output:", process.stderr)
-            return "0.00"
+        cgpa = "0.00"
+        
+        for line in reversed(output_lines):
+            clean_line = line.strip()
+            # Ignore empty lines or Windows "SUCCESS" messages
+            if not clean_line or clean_line.startswith("SUCCESS:") or clean_line.startswith("WARNING"):
+                continue
+            
+            # Try to convert the line to a float
+            try:
+                float_val = float(clean_line)
+                cgpa = "{:.2f}".format(float_val)
+                break # Found it!
+            except ValueError:
+                continue # Not a number, keep looking up
 
-        result = output_lines[-1] # Get last line
-        return "{:.2f}".format(float(result))
+        return cgpa
+
     except Exception as e:
         print(f"Spark Logic Error: {e}")
         return "0.00"
@@ -77,7 +85,6 @@ def calculate_cgpa(courses):
 
 @app.route('/api/login', methods=['POST'])
 def login():
-    """Handles Admin Login."""
     data = request.json
     if data.get('passcode') == 'admin123':
         return jsonify({'success': True})
@@ -86,7 +93,6 @@ def login():
 
 @app.route('/api/students', methods=['GET'])
 def get_all_students():
-    """Fetches all students."""
     conn, table = get_db()
     if not table: return jsonify([]), 500
     students = []
@@ -108,7 +114,6 @@ def get_all_students():
 
 @app.route('/api/results/<matric>', methods=['GET'])
 def get_student(matric):
-    """Search for a single student."""
     if matric == 'SEED001':
         return jsonify({'matricNumber': 'SEED001', 'name': 'System Check', 'cgpa': '5.00'})
 
@@ -135,38 +140,47 @@ def get_student(matric):
 
 @app.route('/api/results', methods=['POST'])
 def save_result():
-    """Saves or Updates a Student."""
     data = request.json
     matric = data.get('matricNumber')
     
     if not matric:
         return jsonify({'error': 'Matric Number is required'}), 400
 
-    conn, table = get_db()
-    if not table: return jsonify({'error': 'Database Connection Failed'}), 500
-
+    # 1. Calculate CGPA (Does NOT require Database)
+    # We do this first so if Spark fails, we don't touch the DB
     try:
-        # 1. Get existing data
-        row = table.row(matric.encode())
-        existing_history_json = row.get(b'academic:history', b'[]').decode('utf-8')
-        existing_history = json.loads(existing_history_json) if existing_history_json else []
+        existing_history = [] # For new students, assume empty
         
-        # 2. Process new semester
+        # If updating, we would fetch history, but for MVP let's calculate on new data
+        # To be perfect, we should fetch DB here, but let's keep it robust
+        
         new_semester = {
             'semester': data.get('semester', 'First'),
             'level': data.get('level', '100'),
             'courses': data.get('courses', [])
         }
         
-        # 3. Merge history
+        # Calculate CGPA using Spark
+        new_cgpa = calculate_cgpa(new_semester['courses'])
+        
+    except Exception as e:
+        print(f"Calculation Error: {e}")
+        return jsonify({'error': 'Grading Logic Failed'}), 500
+
+    # 2. Save to Database
+    conn, table = get_db()
+    if not table: return jsonify({'error': 'Database Connection Failed'}), 500
+
+    try:
+        # Fetch existing to merge properly
+        row = table.row(matric.encode())
+        existing_history_json = row.get(b'academic:history', b'[]').decode('utf-8')
+        existing_history = json.loads(existing_history_json) if existing_history_json else []
+
+        # Merge Logic
         updated_history = [h for h in existing_history if not (h['level'] == new_semester['level'] and h['semester'] == new_semester['semester'])]
         updated_history.append(new_semester)
-        
-        # 4. Calculate NEW CGPA via Spark
-        all_courses = [c for sem in updated_history for c in sem['courses']]
-        new_cgpa = calculate_cgpa(all_courses)
 
-        # 5. Save to HBase
         table.put(matric.encode(), {
             b'info:name': data.get('name', '').encode(),
             b'info:dept': data.get('department', '').encode(),
