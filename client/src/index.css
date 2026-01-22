@@ -104,7 +104,7 @@ nav {
   gap: 15px;
 }
 
-/* ===== CARDS (Search, Results, Login) ===== */
+/* ===== CARDS ===== */
 .search-card, .result-card, .login-card {
   background-color: var(--card-bg);
   border: 1px solid var(--border-color);
@@ -138,7 +138,7 @@ input:focus, select:focus {
   box-shadow: 0 0 0 3px rgba(0, 51, 102, 0.1);
 }
 
-/* ===== BUTTONS ===== */
+/* ===== BUTTONS (FIXED) ===== */
 button {
   padding: 10px 20px;
   font-size: 0.95rem;
@@ -153,10 +153,10 @@ button {
   gap: 8px;
 }
 
-/* Primary Button */
+/* Primary Button (Solid Blue with White Text) */
 button.primary-btn, button[type="submit"] {
   background-color: var(--primary-color);
-  color: white;
+  color: white; /* FIXED: Added white text */
 }
 
 button.primary-btn:hover {
@@ -164,18 +164,19 @@ button.primary-btn:hover {
   transform: translateY(-1px);
 }
 
-/* Secondary Button (Used for Edit / Print) */
+/* Secondary Button (White BG with Blue Text) */
 button.secondary-btn {
   background-color: white;
   border: 1px solid var(--primary-color);
-  color: var(--primary-color);
+  color: var(--primary-color); /* FIXED: Blue text */
 }
 
 button.secondary-btn:hover {
-  background-color: #f0f4f8;
+  background-color: #f0f4f8; /* Light grey hover */
+  color: var(--primary-color); /* FIXED: Text stays blue on hover */
 }
 
-/* Danger Button (Used for Delete / Logout) */
+/* Danger Button (Red Outline) */
 button.danger-btn {
   background-color: #fff;
   color: var(--danger);
@@ -196,7 +197,7 @@ button.nav-active {
 /* ===== ADMIN COURSE ROW ALIGNMENT ===== */
 .course-row {
   display: flex;
-  align-items: flex-end; /* Aligns inputs with the bottom of the 'X' button */
+  align-items: flex-end; 
   gap: 10px;
   padding: 15px;
   background-color: #f8f9fa;
@@ -205,14 +206,13 @@ button.nav-active {
   margin-bottom: 10px;
 }
 
-/* Make inputs inside the row behave nicely */
 .course-row input {
-  margin-bottom: 0; /* Remove default margin so they align */
+  margin-bottom: 0; 
 }
 
-/* The 'X' Button styling specifically */
+/* Fix "X" button alignment */
 .course-row .danger-btn {
-  height: 42px; /* Matches input height */
+  height: 42px; 
   width: 42px;
   padding: 0;
   display: flex;
@@ -226,6 +226,7 @@ button.nav-active {
   overflow-x: auto;
   border: 1px solid var(--border-color);
   border-radius: var(--radius);
+  min-height: 200px; /* Ensures dropdown has space to fall */
 }
 
 table {
@@ -254,7 +255,6 @@ td {
   color: var(--text-main);
 }
 
-/* Zebra striping */
 tbody tr:nth-child(even) {
   background-color: #fafafa;
 }
@@ -326,56 +326,6 @@ tbody tr:nth-child(even) {
   margin-bottom: 20px;
 }
 
-/* ===== PRINT STYLES ===== */
-@media print {
-  @page {
-    margin: 10mm;
-    size: auto;
-  }
-
-  body {
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-    background-color: white;
-  }
-
-  /* Hide navigation, search bars, and buttons */
-  nav, .search-card, button, .no-print {
-    display: none !important;
-  }
-
-  /* Clean up result card */
-  .result-card {
-    box-shadow: none;
-    border: none;
-    padding: 0;
-    margin: 0;
-  }
-
-  /* Force table borders to be visible */
-  table, th, td {
-    border: 1px solid #000 !important;
-  }
-}
-
-/* ===== MOBILE RESPONSIVENESS ===== */
-@media (max-width: 768px) {
-  .course-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  
-  .course-row .danger-btn {
-    width: 100%;
-    margin-top: 10px;
-  }
-  
-  .header-content, nav {
-    text-align: center;
-    flex-direction: column;
-    gap: 15px;
-  }
-}
 /* ===== MODAL STYLES ===== */
 .modal-overlay {
   position: fixed;
@@ -402,9 +352,10 @@ tbody tr:nth-child(even) {
   border-bottom: 2px solid var(--border-color);
   padding-bottom: 10px;
 }
-/* ===== ACTION MENU (Three Dots) ===== */
+
+/* ===== ACTION MENU (Dropdown) ===== */
 .action-menu {
-  position: relative; /* Anchor for the dropdown */
+  position: relative;
   display: inline-block;
 }
 
@@ -428,12 +379,12 @@ tbody tr:nth-child(even) {
 .dropdown-content {
   position: absolute;
   right: 0;
-  top: 100%; /* Shows below the button */
+  top: 100%;
   background-color: white;
-  min-width: 140px;
+  min-width: 160px;
   box-shadow: 0 8px 16px rgba(0,0,0,0.2);
   border-radius: 6px;
-  z-index: 100; /* Stays on top */
+  z-index: 999;
   border: 1px solid #eee;
   overflow: hidden;
 }
@@ -460,4 +411,20 @@ tbody tr:nth-child(even) {
 
 .dropdown-item.delete:hover {
   background-color: #fff5f5;
+}
+
+/* ===== PRINT STYLES ===== */
+@media print {
+  @page { margin: 10mm; size: auto; }
+  body { -webkit-print-color-adjust: exact; print-color-adjust: exact; background-color: white; }
+  nav, .search-card, button, .no-print, .action-menu { display: none !important; }
+  .result-card { box-shadow: none; border: none; padding: 0; margin: 0; }
+  table, th, td { border: 1px solid #000 !important; }
+}
+
+/* ===== MOBILE RESPONSIVENESS ===== */
+@media (max-width: 768px) {
+  .course-row { flex-direction: column; align-items: stretch; }
+  .course-row .danger-btn { width: 100%; margin-top: 10px; }
+  .header-content, nav { text-align: center; flex-direction: column; gap: 15px; }
 }

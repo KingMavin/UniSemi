@@ -165,14 +165,26 @@ button.primary-btn:hover, button[type="submit"]:hover {
   transform: translateY(-1px);
 }
 
-/* Secondary/Ghost Button */
+/* Secondary Button (White BG with Blue Text) */
 button.secondary-btn {
+  background-color: white;
+  border: 1px solid var(--primary-color);
+  color: var(--primary-color); /* Blue text */
+}
+
+button.secondary-btn:hover {
+  background-color: #f0f4f8; /* Light grey hover */
+  color: var(--primary-color); /* Text stays blue on hover */
+}
+
+/* Nav buttons on dark background need white text */
+nav button.secondary-btn {
   background-color: transparent;
   color: rgba(255, 255, 255, 0.8);
   border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
-button.secondary-btn:hover {
+nav button.secondary-btn:hover {
   background-color: rgba(255, 255, 255, 0.1);
   color: white;
 }

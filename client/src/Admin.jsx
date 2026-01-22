@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import authFetch from './utils/authFetch';
-import './App.css';
+import './App.css'; // Make sure this imports your index.css or App.css where the styles are
 
 export default function Admin() {
   const [formData, setFormData] = useState({
@@ -19,7 +19,7 @@ export default function Admin() {
   const [historyData, setHistoryData] = useState([]);
   const [selectedStudent, setSelectedStudent] = useState('');
 
-  // INNOVATION: Action Menu State
+  // Action Menu State
   const [activeDropdown, setActiveDropdown] = useState(null);
 
   // --- API CALLS ---
@@ -171,7 +171,7 @@ export default function Admin() {
   
   // Toggle Menu helper
   const toggleMenu = (e, matric) => {
-      e.stopPropagation(); // Stop click from bubbling to window (which closes it)
+      e.stopPropagation(); 
       setActiveDropdown(activeDropdown === matric ? null : matric);
   };
 
@@ -226,7 +226,7 @@ export default function Admin() {
                 <div style={{ width: '60px', textAlign: 'center', fontWeight: 'bold' }}>
                     {getGradePoint(course.score).grade}
                 </div>
-                <button type="button" className="danger-btn" onClick={() => removeCourse(index)} style={{ height: '40px', width: '40px', padding: 0 }}>×</button>
+                <button type="button" className="danger-btn" onClick={() => removeCourse(index)} style={{ height: '38px', width: '40px', padding: 0 }}>×</button>
             </div>
             ))}
         </div>
@@ -240,7 +240,7 @@ export default function Admin() {
       {/* STUDENTS LIST TABLE */}
       <div>
         <h3 style={{ marginBottom: '15px' }}>📂 Student Records</h3>
-        <div className="table-container" style={{ minHeight: '300px' }}> {/* MinHeight helps dropdown visibility */}
+        <div className="table-container" style={{ minHeight: '300px' }}> 
             <table>
                 <thead>
                     <tr>
