@@ -9,8 +9,8 @@ import datetime
 app = Flask(__name__)
 CORS(app)
 
-# --- HBASE CONFIGURATION ---
-HBASE_HOST = '10.47.246,170'  # YOUR SERVER IP
+# --- CONFIGURATION ---
+HBASE_HOST = '10.47.246.170'  # YOUR SERVER IP
 HBASE_PORT = 9090
 TABLE_STUDENTS = 'students'
 TABLE_LOGS = 'system_logs'
@@ -23,14 +23,12 @@ def get_db(table_name, retry=True):
         )
         tables = connection.tables()
         
-        # INNOVATION: Enable Versioning (Keep last 5 edits)
+        # Enable Versioning for History
         if TABLE_STUDENTS.encode() not in tables:
-            print(f"Creating {TABLE_STUDENTS} with versioning...")
             connection.create_table(TABLE_STUDENTS, {
                 'info': dict(), 
-                'academic': {'max_versions': 5} # <--- THIS IS THE MAGIC
+                'academic': {'max_versions': 5}
             })
-            
         if TABLE_LOGS.encode() not in tables:
             connection.create_table(TABLE_LOGS, {'details': dict()})
             
@@ -42,7 +40,6 @@ def get_db(table_name, retry=True):
             return get_db(table_name, retry=False)
         return None, None
 
-# --- AUDIT LOGGING ---
 def log_action(action, details):
     conn, table = get_db(TABLE_LOGS)
     if not table: return
@@ -57,26 +54,45 @@ def log_action(action, details):
     finally:
         if conn: conn.close()
 
-# --- MATH LOGIC ---
-def calculate_gpa(courses):
+# --- MATH LOGIC (UPDATED) ---
+def get_grade_letter(score):
+    """Converts numeric score to Letter Grade."""
+    try:
+        s = float(score)
+        if s >= 70: return 'A', 5
+        if s >= 60: return 'B', 4
+        if s >= 50: return 'C', 3
+        if s >= 45: return 'D', 2
+        return 'F', 0
+    except:
+        return 'F', 0
+
+def calculate_gpa_data(courses):
+    """Calculates GPA and populates Letter Grades."""
     total_points = 0
-    count = 0
+    total_units = 0
+    processed_courses = []
+
     for course in courses:
-        try:
-            score = float(course.get('score', 0))
-            if score >= 70: point = 5
-            elif score >= 60: point = 4
-            elif score >= 50: point = 3
-            elif score >= 45: point = 2
-            else: point = 0
-            
-            unit = int(course.get('unit', 3))
-            total_points += (point * unit)
-            count += unit
-        except: continue
+        # Get score and unit
+        score = course.get('score', 0)
+        unit = int(course.get('unit', 3))
+        
+        # Calculate Grade & Point
+        letter, point = get_grade_letter(score)
+        
+        # Inject Letter Grade into the course object!
+        course['grade'] = letter 
+        
+        total_points += (point * unit)
+        total_units += unit
+        processed_courses.append(course)
+
+    if total_units == 0:
+        return "0.00", processed_courses
     
-    if count == 0: return "0.00"
-    return "{:.2f}".format(total_points / count)
+    gpa = total_points / total_units
+    return "{:.2f}".format(gpa), processed_courses
 
 def calculate_cumulative(history):
     total_points = 0
@@ -84,14 +100,10 @@ def calculate_cumulative(history):
     for semester in history:
         for course in semester.get('courses', []):
             try:
-                score = float(course.get('score', 0))
-                if score >= 70: point = 5
-                elif score >= 60: point = 4
-                elif score >= 50: point = 3
-                elif score >= 45: point = 2
-                else: point = 0
-                
+                score = course.get('score', 0)
                 unit = int(course.get('unit', 3))
+                _, point = get_grade_letter(score)
+                
                 total_points += (point * unit)
                 total_units += unit
             except: continue
@@ -144,39 +156,23 @@ def get_student(matric):
     finally:
         if conn: conn.close()
 
-# --- INNOVATION ENDPOINT: GRADE HISTORY ---
 @app.route('/api/history/<matric>', methods=['GET'])
 def get_student_history(matric):
-    """Fetches the last 5 versions of a student's Academic History."""
     conn, table = get_db(TABLE_STUDENTS)
     try:
-        # Fetch up to 5 versions of the 'academic:history' column
         cells = table.cells(matric.encode(), b'academic:history', versions=5)
-        
         history_log = []
         for value, timestamp in cells:
-            # Convert HBase timestamp (ms) to readable date
             dt_object = datetime.datetime.fromtimestamp(timestamp / 1000)
             date_str = dt_object.strftime('%Y-%m-%d %H:%M:%S')
-            
-            # Parse the data to get a summary
             data = json.loads(value.decode('utf-8'))
-            
-            # Extract last semester added for summary
             last_action = "Result Update"
             if data:
                 last_sem = data[-1]
                 last_action = f"Uploaded {last_sem.get('level')} Lvl {last_sem.get('semester')} Sem"
-
-            history_log.append({
-                'timestamp': date_str,
-                'action': last_action,
-                'total_semesters': len(data)
-            })
-            
+            history_log.append({'timestamp': date_str, 'action': last_action, 'total_semesters': len(data)})
         return jsonify(history_log)
     except Exception as e:
-        print(f"History Error: {e}")
         return jsonify([])
     finally:
         if conn: conn.close()
@@ -191,29 +187,35 @@ def save_result():
         existing_json = row.get(b'academic:history', b'[]').decode('utf-8')
         history = json.loads(existing_json) if existing_json else []
 
+        # 1. Calculate GPA & Inject Letter Grades into Courses
+        raw_courses = data.get('courses', [])
+        semester_gpa, processed_courses = calculate_gpa_data(raw_courses)
+
         new_sem = {
             'semester': data.get('semester', 'First'),
             'level': data.get('level', '100'),
-            'courses': data.get('courses', [])
+            'courses': processed_courses, # Now contains 'grade': 'A'
+            'gpa': semester_gpa           # Explicitly save Semester GPA
         }
         
-        current_gpa = calculate_gpa(new_sem['courses'])
-        
-        # Filter duplicates and append
+        # 2. Update History
         history = [h for h in history if not (h['level'] == new_sem['level'] and h['semester'] == new_sem['semester'])]
         history.append(new_sem)
+        
+        # 3. Calculate CGPA
         new_cgpa = calculate_cumulative(history)
 
+        # 4. Save
         table.put(matric.encode(), {
             b'info:name': data.get('name', '').encode(),
             b'info:dept': data.get('department', '').encode(),
-            b'info:gpa': current_gpa.encode(),
-            b'info:cgpa': new_cgpa.encode(),
+            b'info:gpa': semester_gpa.encode(), # Save current GPA
+            b'info:cgpa': new_cgpa.encode(),    # Save Cumulative
             b'academic:history': json.dumps(history).encode()
         })
         
         log_action("RESULT_UPLOAD", f"Updated result for {matric}")
-        return jsonify({'success': True, 'gpa': current_gpa, 'cgpa': new_cgpa})
+        return jsonify({'success': True, 'gpa': semester_gpa, 'cgpa': new_cgpa})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:

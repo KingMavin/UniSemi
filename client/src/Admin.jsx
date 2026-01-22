@@ -14,10 +14,13 @@ export default function Admin() {
   const [students, setStudents] = useState([]); 
   const [stats, setStats] = useState({ total: 0, avgCGPA: '0.00', highestCGPA: '0.00' });
   
-  // INNOVATION: History Modal State
+  // History Modal State
   const [showHistory, setShowHistory] = useState(false);
   const [historyData, setHistoryData] = useState([]);
   const [selectedStudent, setSelectedStudent] = useState('');
+
+  // INNOVATION: Action Menu State
+  const [activeDropdown, setActiveDropdown] = useState(null);
 
   // --- API CALLS ---
   const fetchLogs = async () => {
@@ -45,7 +48,15 @@ export default function Admin() {
     setStats({ total, avgCGPA: avg, highestCGPA: highest });
   };
 
-  useEffect(() => { fetchLogs(); fetchStudents(); }, []);
+  useEffect(() => { 
+      fetchLogs(); 
+      fetchStudents();
+      
+      // Close dropdown if clicking anywhere else
+      const closeMenu = () => setActiveDropdown(null);
+      window.addEventListener('click', closeMenu);
+      return () => window.removeEventListener('click', closeMenu);
+  }, []);
 
   // --- FORM LOGIC ---
   const getGradePoint = (score) => {
@@ -140,7 +151,6 @@ export default function Admin() {
     } catch (err) { setMessage(`❌ Fetch failed: ${err.message}`); }
   };
 
-  // INNOVATION: View History
   const handleViewHistory = async (matric) => {
       setSelectedStudent(matric);
       try {
@@ -157,6 +167,12 @@ export default function Admin() {
       await authFetch('/api/logs', { method: 'DELETE' });
       fetchLogs(); setMessage('✅ Logs cleared successfully');
     } catch (err) { setMessage(`❌ Failed to clear logs: ${err.message}`); }
+  };
+  
+  // Toggle Menu helper
+  const toggleMenu = (e, matric) => {
+      e.stopPropagation(); // Stop click from bubbling to window (which closes it)
+      setActiveDropdown(activeDropdown === matric ? null : matric);
   };
 
   return (
@@ -224,13 +240,12 @@ export default function Admin() {
       {/* STUDENTS LIST TABLE */}
       <div>
         <h3 style={{ marginBottom: '15px' }}>📂 Student Records</h3>
-        <div className="table-container">
+        <div className="table-container" style={{ minHeight: '300px' }}> {/* MinHeight helps dropdown visibility */}
             <table>
                 <thead>
                     <tr>
                         <th>Matric No</th>
                         <th>Name</th>
-                        <th>GPA</th>
                         <th>CGPA</th>
                         <th>Action</th>
                     </tr>
@@ -240,13 +255,25 @@ export default function Admin() {
                         <tr key={student.matricNumber}>
                             <td style={{ fontWeight: 'bold' }}>{student.matricNumber}</td>
                             <td>{student.name}</td>
-                            <td>{student.gpa}</td>
                             <td style={{ color: 'var(--success)', fontWeight: 'bold' }}>{student.cgpa}</td>
-                            <td>
-                                <div style={{ display: 'flex', gap: '10px' }}>
-                                    <button className="secondary-btn" onClick={() => handleEditStudent(student.matricNumber)} style={{ padding: '6px 12px', fontSize: '0.8rem' }}>Edit</button>
-                                    <button className="secondary-btn" onClick={() => handleViewHistory(student.matricNumber)} style={{ padding: '6px 12px', fontSize: '0.8rem', borderColor: 'var(--warning)', color: 'var(--text-main)' }}>History</button>
-                                    <button className="danger-btn" onClick={() => handleDeleteStudent(student.matricNumber)} style={{ padding: '6px 12px', fontSize: '0.8rem' }}>Delete</button>
+                            <td style={{ textAlign: 'center' }}>
+                                {/* THE THREE DOTS MENU */}
+                                <div className="action-menu">
+                                    <button className="menu-btn" onClick={(e) => toggleMenu(e, student.matricNumber)}>⋮</button>
+                                    
+                                    {activeDropdown === student.matricNumber && (
+                                        <div className="dropdown-content">
+                                            <div className="dropdown-item" onClick={() => handleEditStudent(student.matricNumber)}>
+                                                ✏️ Edit Result
+                                            </div>
+                                            <div className="dropdown-item" onClick={() => handleViewHistory(student.matricNumber)}>
+                                                📜 View History
+                                            </div>
+                                            <div className="dropdown-item delete" onClick={() => handleDeleteStudent(student.matricNumber)}>
+                                                🗑️ Delete
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             </td>
                         </tr>
