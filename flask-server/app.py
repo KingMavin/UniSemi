@@ -4,34 +4,35 @@ import happybase
 import json
 import time
 import uuid
+import datetime
 
 app = Flask(__name__)
 CORS(app)
 
 # --- HBASE CONFIGURATION ---
-HBASE_HOST = '10.47.246.170'  # YOUR SERVER IP
+HBASE_HOST = '10.47.246,170'  # YOUR SERVER IP
 HBASE_PORT = 9090
 TABLE_STUDENTS = 'students'
 TABLE_LOGS = 'system_logs'
 
 def get_db(table_name, retry=True):
-    """Connects to HBase and returns the specific table."""
     try:
         connection = happybase.Connection(
-            HBASE_HOST, 
-            port=HBASE_PORT, 
-            timeout=5000, 
-            transport='buffered', 
-            protocol='binary',
-            autoconnect=True
+            HBASE_HOST, port=HBASE_PORT, timeout=5000, 
+            transport='buffered', protocol='binary', autoconnect=True
         )
-        
-        # Create tables if they don't exist
         tables = connection.tables()
+        
+        # INNOVATION: Enable Versioning (Keep last 5 edits)
+        if TABLE_STUDENTS.encode() not in tables:
+            print(f"Creating {TABLE_STUDENTS} with versioning...")
+            connection.create_table(TABLE_STUDENTS, {
+                'info': dict(), 
+                'academic': {'max_versions': 5} # <--- THIS IS THE MAGIC
+            })
+            
         if TABLE_LOGS.encode() not in tables:
             connection.create_table(TABLE_LOGS, {'details': dict()})
-        if TABLE_STUDENTS.encode() not in tables:
-            connection.create_table(TABLE_STUDENTS, {'info': dict(), 'academic': dict()})
             
         return connection, connection.table(table_name)
     except Exception as e:
@@ -43,11 +44,9 @@ def get_db(table_name, retry=True):
 
 # --- AUDIT LOGGING ---
 def log_action(action, details):
-    """Saves an action to the logs table."""
     conn, table = get_db(TABLE_LOGS)
     if not table: return
     try:
-        # Use reverse timestamp so newest logs appear first in scans
         timestamp = str(int(time.time() * 1000))
         row_key = f"{timestamp}_{uuid.uuid4().hex[:8]}"
         table.put(row_key.encode(), {
@@ -71,7 +70,7 @@ def calculate_gpa(courses):
             elif score >= 45: point = 2
             else: point = 0
             
-            unit = int(course.get('unit', 3)) # Default to 3 units if missing
+            unit = int(course.get('unit', 3))
             total_points += (point * unit)
             count += unit
         except: continue
@@ -82,7 +81,6 @@ def calculate_gpa(courses):
 def calculate_cumulative(history):
     total_points = 0
     total_units = 0
-    
     for semester in history:
         for course in semester.get('courses', []):
             try:
@@ -107,7 +105,7 @@ def calculate_cumulative(history):
 def login():
     data = request.json
     if data.get('passcode') == 'admin123':
-        log_action("ADMIN_LOGIN", "Admin accessed the dashboard") # <--- LOGGING ADDED
+        log_action("ADMIN_LOGIN", "Admin accessed the dashboard")
         return jsonify({'success': True})
     return jsonify({'success': False, 'error': 'Invalid Passcode'}), 401
 
@@ -130,14 +128,11 @@ def get_all_students():
 
 @app.route('/api/results/<matric>', methods=['GET'])
 def get_student(matric):
-    if matric == 'SEED001':
-        return jsonify({'matricNumber': 'SEED001', 'name': 'System Check', 'cgpa': '5.00'})
-
+    if matric == 'SEED001': return jsonify({'matricNumber': 'SEED001', 'name': 'System Check', 'cgpa': '5.00'})
     conn, table = get_db(TABLE_STUDENTS)
     try:
         row = table.row(matric.encode())
         if not row: return jsonify({'error': 'Student not found'}), 404
-
         academic_json = row.get(b'academic:history', b'[]').decode('utf-8')
         return jsonify({
             'matricNumber': matric,
@@ -149,11 +144,47 @@ def get_student(matric):
     finally:
         if conn: conn.close()
 
+# --- INNOVATION ENDPOINT: GRADE HISTORY ---
+@app.route('/api/history/<matric>', methods=['GET'])
+def get_student_history(matric):
+    """Fetches the last 5 versions of a student's Academic History."""
+    conn, table = get_db(TABLE_STUDENTS)
+    try:
+        # Fetch up to 5 versions of the 'academic:history' column
+        cells = table.cells(matric.encode(), b'academic:history', versions=5)
+        
+        history_log = []
+        for value, timestamp in cells:
+            # Convert HBase timestamp (ms) to readable date
+            dt_object = datetime.datetime.fromtimestamp(timestamp / 1000)
+            date_str = dt_object.strftime('%Y-%m-%d %H:%M:%S')
+            
+            # Parse the data to get a summary
+            data = json.loads(value.decode('utf-8'))
+            
+            # Extract last semester added for summary
+            last_action = "Result Update"
+            if data:
+                last_sem = data[-1]
+                last_action = f"Uploaded {last_sem.get('level')} Lvl {last_sem.get('semester')} Sem"
+
+            history_log.append({
+                'timestamp': date_str,
+                'action': last_action,
+                'total_semesters': len(data)
+            })
+            
+        return jsonify(history_log)
+    except Exception as e:
+        print(f"History Error: {e}")
+        return jsonify([])
+    finally:
+        if conn: conn.close()
+
 @app.route('/api/results', methods=['POST'])
 def save_result():
     data = request.json
     matric = data.get('matricNumber')
-    
     conn, table = get_db(TABLE_STUDENTS)
     try:
         row = table.row(matric.encode())
@@ -166,10 +197,9 @@ def save_result():
             'courses': data.get('courses', [])
         }
         
-        # Calculate Scores
         current_gpa = calculate_gpa(new_sem['courses'])
         
-        # Update History
+        # Filter duplicates and append
         history = [h for h in history if not (h['level'] == new_sem['level'] and h['semester'] == new_sem['semester'])]
         history.append(new_sem)
         new_cgpa = calculate_cumulative(history)
@@ -182,7 +212,7 @@ def save_result():
             b'academic:history': json.dumps(history).encode()
         })
         
-        log_action("RESULT_UPLOAD", f"Updated result for {matric}") # <--- LOGGING ADDED
+        log_action("RESULT_UPLOAD", f"Updated result for {matric}")
         return jsonify({'success': True, 'gpa': current_gpa, 'cgpa': new_cgpa})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -195,7 +225,7 @@ def delete_student(matric):
     conn, table = get_db(TABLE_STUDENTS)
     try:
         table.delete(matric.encode())
-        log_action("DELETE_STUDENT", f"Deleted record: {matric}") # <--- LOGGING ADDED
+        log_action("DELETE_STUDENT", f"Deleted record: {matric}")
         return jsonify({'success': True})
     finally:
         if conn: conn.close()
@@ -205,7 +235,6 @@ def get_logs_route():
     conn, table = get_db(TABLE_LOGS)
     logs = []
     try:
-        # Fetch last 50 logs
         for key, data in table.scan(limit=50, reverse=True):
             logs.append({
                 'id': key.decode('utf-8'),
@@ -221,8 +250,6 @@ def get_logs_route():
 def clear_logs():
     conn, table = get_db(TABLE_LOGS)
     try:
-        # Delete the whole table and recreate it
-        # Note: In production, just delete rows. For this project, recreate is faster/cleaner.
         admin_conn = happybase.Connection(HBASE_HOST, port=HBASE_PORT)
         admin_conn.open()
         admin_conn.disable_table(TABLE_LOGS)
@@ -232,26 +259,15 @@ def clear_logs():
         return jsonify({'success': True})
     finally:
         if conn: conn.close()
-
+        
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """True System Health Check: Pings HBase."""
-    # retry=False because we want instant feedback, not a wait loop
     conn, table = get_db(TABLE_STUDENTS, retry=False) 
-    
     if conn:
-        try:
-            # Perform a lightweight operation to prove DB is responsive
-            conn.tables() 
-            return jsonify({'status': 'online', 'details': 'HBase Connected'}), 200
-        except Exception as e:
-            print(f"Health Check Failed: {e}")
-            return jsonify({'status': 'db_error', 'details': str(e)}), 503
-        finally:
-            conn.close()
-            
-    # If get_db returned None, the connection failed
-    return jsonify({'status': 'offline', 'details': 'Database Unreachable'}), 503
+        conn.close()
+        return jsonify({'status': 'online'}), 200
+    return jsonify({'status': 'offline'}), 503
 
 if __name__ == '__main__':
+    print("🚀 Flask Server is running on port 5000...")
     app.run(port=5000, debug=True)

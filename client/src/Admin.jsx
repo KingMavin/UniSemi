@@ -4,11 +4,7 @@ import './App.css';
 
 export default function Admin() {
   const [formData, setFormData] = useState({
-    matricNumber: '',
-    name: '',
-    department: '',
-    level: '',
-    semester: 'First',
+    matricNumber: '', name: '', department: '', level: '', semester: 'First',
     yearOfAdmission: new Date().getFullYear(),
     courses: [{ courseCode: '', score: '', grade: '', unit: '3', scoreError: false }]
   });
@@ -17,6 +13,11 @@ export default function Admin() {
   const [logs, setLogs] = useState([]);      
   const [students, setStudents] = useState([]); 
   const [stats, setStats] = useState({ total: 0, avgCGPA: '0.00', highestCGPA: '0.00' });
+  
+  // INNOVATION: History Modal State
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyData, setHistoryData] = useState([]);
+  const [selectedStudent, setSelectedStudent] = useState('');
 
   // --- API CALLS ---
   const fetchLogs = async () => {
@@ -93,7 +94,6 @@ export default function Admin() {
       await authFetch('/api/results', { method: 'POST', body: JSON.stringify(formData) });
       setMessage('✅ Result Processed Successfully!');
       fetchLogs(); fetchStudents();
-      // Reset form
       setFormData({
         matricNumber: '', name: '', department: '', level: '', semester: 'First',
         yearOfAdmission: new Date().getFullYear(),
@@ -102,7 +102,6 @@ export default function Admin() {
     } catch (err) { setMessage(`❌ Operation Failed: ${err.message || 'Unknown error'}`); }
   };
 
-  // --- DELETE LOGIC (FIXED) ---
   const handleDeleteStudent = async (matric) => {
     if(!window.confirm(`Delete record for ${matric}?`)) return;
     try { 
@@ -111,14 +110,11 @@ export default function Admin() {
     } catch (err) { setMessage(`❌ Delete failed: ${err.message}`); }
   };
 
-  // --- EDIT LOGIC (NEW) ---
   const handleEditStudent = async (matric) => {
     try {
         const response = await authFetch(`/api/results/${matric}`);
         const data = response.data || response;
         
-        // Populate form with fetched data
-        // If history exists, populate courses with the LAST semester found
         let lastCourses = [{ courseCode: '', score: '', grade: '', unit: '3' }];
         let lastLevel = '';
         let lastSemester = 'First';
@@ -136,12 +132,22 @@ export default function Admin() {
             department: data.department,
             level: lastLevel,
             semester: lastSemester,
-            yearOfAdmission: new Date().getFullYear(), // Default or store in DB if needed
+            yearOfAdmission: new Date().getFullYear(),
             courses: lastCourses
         });
-        window.scrollTo(0, 0); // Scroll to top to edit
+        window.scrollTo(0, 0); 
         setMessage('✏️ Loaded student data for editing.');
     } catch (err) { setMessage(`❌ Fetch failed: ${err.message}`); }
+  };
+
+  // INNOVATION: View History
+  const handleViewHistory = async (matric) => {
+      setSelectedStudent(matric);
+      try {
+          const response = await authFetch(`/api/history/${matric}`);
+          setHistoryData(response.data || response || []);
+          setShowHistory(true);
+      } catch (err) { console.error(err); }
   };
 
   const clearAllLogs = async () => {
@@ -157,7 +163,7 @@ export default function Admin() {
     <div className="result-card">
       <h2 style={{ color: 'var(--primary-color)', marginBottom: '20px' }}>⚙️ Admin Dashboard</h2>
       
-      {/* ANALYTICS */}
+      {/* STATS */}
       <div className="stats-grid">
         <div className="stats-card"><h3>{stats.total}</h3><span>Total Students</span></div>
         <div className="stats-card"><h3>{stats.avgCGPA}</h3><span>Average CGPA</span></div>
@@ -201,7 +207,7 @@ export default function Admin() {
                     <input placeholder="Score" name="score" type="number" value={course.score} onChange={(e) => handleCourseChange(index, e)} required 
                            style={{ borderColor: course.scoreError ? 'var(--danger)' : '' }} />
                 </div>
-                <div style={{ height: '35px', width: '60px', textAlign: 'center', fontWeight: 'bold' }}>
+                <div style={{ width: '60px', textAlign: 'center', fontWeight: 'bold' }}>
                     {getGradePoint(course.score).grade}
                 </div>
                 <button type="button" className="danger-btn" onClick={() => removeCourse(index)} style={{ height: '40px', width: '40px', padding: 0 }}>×</button>
@@ -224,30 +230,23 @@ export default function Admin() {
                     <tr>
                         <th>Matric No</th>
                         <th>Name</th>
-                        <th>GPA (Sem)</th>
-                        <th>CGPA (Total)</th>
+                        <th>GPA</th>
+                        <th>CGPA</th>
                         <th>Action</th>
                     </tr>
                 </thead>
                 <tbody>
                     {students.map((student) => (
-                        <tr key={student.matricNumber}> {/* FIXED KEY */}
+                        <tr key={student.matricNumber}>
                             <td style={{ fontWeight: 'bold' }}>{student.matricNumber}</td>
                             <td>{student.name}</td>
                             <td>{student.gpa}</td>
                             <td style={{ color: 'var(--success)', fontWeight: 'bold' }}>{student.cgpa}</td>
                             <td>
                                 <div style={{ display: 'flex', gap: '10px' }}>
-                                    <button className="secondary-btn" 
-                                            onClick={() => handleEditStudent(student.matricNumber)} 
-                                            style={{ padding: '6px 12px', fontSize: '0.8rem' }}>
-                                        Edit
-                                    </button>
-                                    <button className="danger-btn" 
-                                            onClick={() => handleDeleteStudent(student.matricNumber)} 
-                                            style={{ padding: '6px 12px', fontSize: '0.8rem' }}>
-                                        Delete
-                                    </button>
+                                    <button className="secondary-btn" onClick={() => handleEditStudent(student.matricNumber)} style={{ padding: '6px 12px', fontSize: '0.8rem' }}>Edit</button>
+                                    <button className="secondary-btn" onClick={() => handleViewHistory(student.matricNumber)} style={{ padding: '6px 12px', fontSize: '0.8rem', borderColor: 'var(--warning)', color: 'var(--text-main)' }}>History</button>
+                                    <button className="danger-btn" onClick={() => handleDeleteStudent(student.matricNumber)} style={{ padding: '6px 12px', fontSize: '0.8rem' }}>Delete</button>
                                 </div>
                             </td>
                         </tr>
@@ -278,6 +277,30 @@ export default function Admin() {
             </table>
         </div>
       </div>
+
+      {/* HISTORY MODAL POPUP */}
+      {showHistory && (
+          <div className="modal-overlay">
+              <div className="modal-content">
+                  <h3>📜 Grade History: {selectedStudent}</h3>
+                  <div className="table-container" style={{maxHeight: '300px', overflowY: 'auto'}}>
+                    <table>
+                        <thead><tr><th>Time</th><th>Action</th><th>Semester Count</th></tr></thead>
+                        <tbody>
+                            {historyData.map((h, i) => (
+                                <tr key={i}>
+                                    <td>{h.timestamp}</td>
+                                    <td>{h.action}</td>
+                                    <td>{h.total_semesters}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                  </div>
+                  <button className="primary-btn" onClick={() => setShowHistory(false)} style={{marginTop: '20px', width: '100%'}}>Close</button>
+              </div>
+          </div>
+      )}
     </div>
   );
 }
