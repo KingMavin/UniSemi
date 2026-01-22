@@ -201,7 +201,7 @@ export default function Admin() {
                     <input placeholder="Score" name="score" type="number" value={course.score} onChange={(e) => handleCourseChange(index, e)} required 
                            style={{ borderColor: course.scoreError ? 'var(--danger)' : '' }} />
                 </div>
-                <div style={{ width: '60px', textAlign: 'center', fontWeight: 'bold' }}>
+                <div style={{ height: '35px', width: '60px', textAlign: 'center', fontWeight: 'bold' }}>
                     {getGradePoint(course.score).grade}
                 </div>
                 <button type="button" className="danger-btn" onClick={() => removeCourse(index)} style={{ height: '40px', width: '40px', padding: 0 }}>×</button>

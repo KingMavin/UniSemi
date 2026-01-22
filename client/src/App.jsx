@@ -129,17 +129,32 @@ function App() {
     finally { setLoading(false); }
   };
 
+  // --- SERVER STATUS CHECK ---
   useEffect(() => {
     let mounted = true;
+    
     const ping = async () => {
       try {
-        await authFetch('/api/results/SEED001', { method: 'GET', timeout: 3000 });
+        // Change URL from '/api/results/SEED001' to '/api/health'
+        await authFetch('/api/health', { method: 'GET', timeout: 5000 });
+        
         if (mounted) setServerConnected(true);
-      } catch (err) { if (mounted) setServerConnected(err && err.response ? true : false); }
+      } catch (err) {
+        // If the request fails (404, 500, 503, or Network Error), set to false
+        if (mounted) setServerConnected(false);
+      }
     };
+
+    // Run immediately on load
     ping();
+    
+    // Then run every 10 seconds
     const id = setInterval(ping, 10000);
-    return () => { mounted = false; clearInterval(id); };
+    
+    return () => { 
+        mounted = false; 
+        clearInterval(id); 
+    };
   }, []);
 
   return (

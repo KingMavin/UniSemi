@@ -233,5 +233,25 @@ def clear_logs():
     finally:
         if conn: conn.close()
 
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """True System Health Check: Pings HBase."""
+    # retry=False because we want instant feedback, not a wait loop
+    conn, table = get_db(TABLE_STUDENTS, retry=False) 
+    
+    if conn:
+        try:
+            # Perform a lightweight operation to prove DB is responsive
+            conn.tables() 
+            return jsonify({'status': 'online', 'details': 'HBase Connected'}), 200
+        except Exception as e:
+            print(f"Health Check Failed: {e}")
+            return jsonify({'status': 'db_error', 'details': str(e)}), 503
+        finally:
+            conn.close()
+            
+    # If get_db returned None, the connection failed
+    return jsonify({'status': 'offline', 'details': 'Database Unreachable'}), 503
+
 if __name__ == '__main__':
     app.run(port=5000, debug=True)
